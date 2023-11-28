@@ -6,6 +6,7 @@ from pdfminer.pdfpage import PDFPage
 from django.template.defaulttags import register
 from pdfminer.converter import XMLConverter, HTMLConverter, TextConverter
 from pdfminer.layout import LAParams
+from youtube_transcript_api import YouTubeTranscriptApi
 from io import StringIO
 from .utilityFunctions import *
 import os
@@ -19,6 +20,20 @@ from django.contrib.auth.decorators import login_required
 from django.contrib.auth.models import User
 from .models import Analysis
 from .signup import SignUpForm
+from django.http import HttpResponse
+from googleapiclient.discovery import build
+from django.contrib.auth.decorators import login_required
+from .utilityFunctions import detailed_analysis
+import tweepy
+import requests
+import praw
+import cv2 
+import matplotlib.pyplot as plt 
+from deepface import DeepFace 
+from django.db import models
+
+class UploadedFile(models.Model):
+    file = models.FileField(upload_to='uploads/')
 
 
 @register.filter(name='get_item')
@@ -139,6 +154,32 @@ def detailed_analysis(result):
     return result_dict
 
 
+def get_face_analysis(path):
+    # read image 
+    img = cv2.imread(path) 
+    result = DeepFace.analyze(img,actions = ['emotion'])
+    print(result[0]['emotion']) 
+    return result[0]['emotion']
+
+@login_required(login_url="/login")
+def faceAnalysis(request):
+    if request.method == 'POST':
+        file = request.FILES['document']
+        fs = FileSystemStorage()
+        fs.save(file.name, file)
+        pathname = "media/"
+        extension_name = file.name
+        extension_name = extension_name[len(extension_name)-3:]
+        path = pathname+file.name
+        print(path)
+        result = get_face_analysis(path)
+        os.system(
+            'cd /Users/sj941/Documents/GitHub/SE_Project1/sentimental_analysis/media/ && rm -rf *')
+        return render(request, 'realworld/face_analysis_result.html', {"sentiment": result, "current_user":request.user})
+    else:
+        note = "Please enter the facial photo you want to analyze"
+        return render(request, 'realworld/face_analysis.html', {'note':note, "current_user":request.user})
+
 @login_required(login_url="/login")
 def input(request):
     if request.method == 'POST':
@@ -148,7 +189,7 @@ def input(request):
         pathname = "media/"
         extension_name = file.name
         extension_name = extension_name[len(extension_name)-3:]
-        path = pathname+file.name
+        path = pathname+file.namexs
         result = {}
         if extension_name == 'pdf':
             value = pdfparser(path)
@@ -172,6 +213,7 @@ def input(request):
                 text = r.recognize_google(audio_data)
                 value = text.split('.')
                 result = detailed_analysis(value)
+        print("YOLO",result)
         # Sentiment Analysis
         os.system(
             'cd /Users/sj941/Documents/GitHub/SE_Project1/sentimental_analysis/media/ && rm -rf *')
@@ -201,17 +243,15 @@ def productanalysis(request):
 
         # final_comment is a list of strings!
         result = detailed_analysis(final_comment)
-        print(result)
         return render(request, 'realworld/sentiment_graph.html', {"sentiment": result, "current_user": request.user})
 
     else:
         note = "Please Enter the product blog link for analysis"
         return render(request, 'realworld/productanalysis.html', {"note": note, "current_user": request.user})
 
-# Custom template filter to retrieve a dictionary value by key.
 
 
-@login_required(login_url="/login")
+
 def textanalysis(request):
     if request.method == 'POST':
         text_data = request.POST.get("Text", "")
@@ -219,7 +259,7 @@ def textanalysis(request):
 
         # final_comment is a list of strings!
         result = detailed_analysis(final_comment)
-        print(result)
+        print("yolo",result)
         return render(request, 'realworld/sentiment_graph.html', {'sentiment': result, "current_user": request.user})
     else:
         note = "Enter the Text to be analysed!"
@@ -243,6 +283,66 @@ def get_video_comments(youtube, **kwargs):
             break
 
     return comments
+
+def get_video_captions(video_id):
+    try:
+        transcript = YouTubeTranscriptApi.get_transcript(video_id)
+        captions = [entry['text'] for entry in transcript]
+        return captions
+    except Exception as e:
+        print(f"An error occurred: {e}")
+        return None
+
+@login_required(login_url="/login")    
+def reddit_analysis(request):
+    if request.method == 'POST':
+        keyword = request.POST.get("keyword", "")
+        reddit_read_only = praw.Reddit(client_id="Mb8Sp8_PcTtqHYn-5rRKsw", client_secret="w1oGqM9jiEMD__RQCMpE6LcLnwYqoQ", user_agent="Ok-Huckleberry-8806") 
+        reddit_data = reddit_read_only.subreddit("all")
+        to_be_analysed = []
+        for post in reddit_data.search(keyword, limit=10):
+            to_be_analysed.append(post.title)
+        result = detailed_analysis(to_be_analysed)
+        print(result)
+        return render(request, 'realworld/sentiment_graph.html', {"sentiment": result, "current_user": request.user if request.user.is_authenticated else None})
+    else:
+        note = "Enter the reddit topic to be analyzed!"
+        return render(request, 'realworld/redditdataanalysis.html', {'note': note, "current_user": request.user})
+        
+        
+
+@login_required(login_url="/login")
+def ytcaptions(request):
+    if request.method == 'POST':
+        print("called to ytcaptions")
+        ytid = request.POST.get("ytid", "")
+        # Replace with your API key or set up OAuth through GCP
+        API_KEY = "AIzaSyB_NLPhehliexJvYFw5upWxtgTGDRNrlAw"
+        VIDEO_ID = ytid  # Replace with the YouTube video ID
+
+        youtube = build("youtube", "v3", developerKey=API_KEY)
+        # Get captions for a specific video
+        print(ytid)
+        print(API_KEY)
+        print(VIDEO_ID)
+        try:
+            captions = get_video_captions(VIDEO_ID)
+            final_caption=[]
+            if captions:
+                  for i, caption in enumerate(captions, 1):
+                        final_caption.append(caption)
+            else:
+                print("Failed to retrieve captions.")
+    
+            result = detailed_analysis(final_caption)
+
+            return render(request, 'realworld/sentiment_graph.html', {"sentiment": result, "current_user": request.user if request.user.is_authenticated else None})
+        except Exception as e:
+            print(e)
+            return render(request, 'realworld/error.html', {"current_user": request.user})
+    else:
+        note = "Enter the video ID to be analyzed!"
+        return render(request, 'realworld/ytcaptions.html', {'note': note, "current_user": request.user})
 
 
 @login_required(login_url="/login")
@@ -293,7 +393,6 @@ def audioanalysis(request):
         result = sentiment_analyzer_scores(text)
         print("Result")
         print(result)
-        # Sentiment Analysis
         os.system(
             'cd /Users/sj941/Documents/GitHub/SE_Project1/sentimental_analysis/media/ && rm -rf *')
         return render(request, 'realworld/sentiment_graph.html', {'sentiment': result, "current_user": request.user})
@@ -319,5 +418,4 @@ def sentiment_analyzer_scores(sentence):
     analyser = SentimentIntensityAnalyzer()
     print("Scores analysed")
     score = analyser.polarity_scores(sentence)
-    # print("{:-<40} {}".format(sentence, str(score)))
     return score
